@@ -1,57 +1,42 @@
 package models
 
-class Inventario {
+/** El mapa de stock es privado; el exterior obtiene únicamente una copia de lectura. */
+class Inventario(stockInicial: Map<String, Int>) {
+    private val stock = stockInicial.toMutableMap()
 
-    fun verificarYActualizarInventario(
-        producto: Producto,
-        cantidadPizzas: Int,
-        inventario: MutableMap<String, Int>): Boolean {
+    init { require(stock.values.all { it >= 0 }) { "El stock inicial no puede ser negativo." } }
 
-        // Calcular ingredientes necesarios para el pedido
-        val ingredientesNecesarios = producto.ingredientes.mapValues {
-                (_, cantidadPorPizza) -> cantidadPorPizza * cantidadPizzas }
+    fun consultarStock(): Map<String, Int> = stock.toMap()
 
-        // Identificar ingredientes insuficientes
-        val ingredientesFaltantes = ingredientesNecesarios.filter {
-                (ingrediente, cantidadNecesaria) ->
-            val disponible = inventario[ingrediente] ?: 0
-            disponible < cantidadNecesaria }
+    fun verificarYActualizarInventario(pedido: Pedido): Boolean {
+        val necesarios = mutableMapOf<String, Int>()
+        for (detalle in pedido.detalles) {
+            for ((ingrediente, porUnidad) in detalle.producto.ingredientes) {
+                necesarios[ingrediente] = (necesarios[ingrediente] ?: 0) +
+                    porUnidad * detalle.cantidad
+            }
+        }
 
-        // Evaluar disponibilidad mediante when
+        val faltantes = necesarios.filter { (ingrediente, necesario) ->
+            (stock[ingrediente] ?: 0) < necesario
+        }
         return when {
-            cantidadPizzas <= 0 -> {
-                println("Error: La cantidad de pizzas debe ser mayor a cero.")
-                false
-            }
-
-            ingredientesFaltantes.isNotEmpty() -> {
+            faltantes.isNotEmpty() -> {
                 println("Pedido rechazado. Ingredientes insuficientes:")
-
-                ingredientesFaltantes.forEach { (ingrediente, necesario) ->
-                    val disponible = inventario[ingrediente] ?: 0
-                    val faltante = necesario - disponible
-
-                    println(
-                        "$ingrediente: disponibles $disponible, " +
-                                "necesarios $necesario. Reabastecer $faltante unidades."
-                    )
+                for ((ingrediente, necesario) in faltantes) {
+                    val disponible = stock[ingrediente] ?: 0
+                    println("- $ingrediente: disponible $disponible; necesita $necesario; reponer ${necesario - disponible}.")
                 }
-
                 false
             }
-
             else -> {
-                // Descontar ingredientes utilizados
-                ingredientesNecesarios.forEach { (ingrediente, necesario) ->
-                    inventario[ingrediente] =
-                        (inventario[ingrediente] ?: 0) - necesario
+                // Descuento atómico: solo se actualiza si todos los ingredientes alcanzan.
+                for ((ingrediente, necesario) in necesarios) {
+                    stock[ingrediente] = (stock[ingrediente] ?: 0) - necesario
                 }
-
                 println("Pedido confirmado. Inventario actualizado.")
                 true
             }
         }
     }
-
-
 }

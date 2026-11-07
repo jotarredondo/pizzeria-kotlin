@@ -1,382 +1,132 @@
-import models.Cliente
-import models.Inventario
-import models.Pedido
-import models.Producto
-import models.Repartidor
-import java.util.Locale
-
-private val formatoTelefono = Regex("^\\+?[0-9]{8,15}$")
-private val formatoCorreo = Regex(
-    "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
-)
+import models.*
+import services.Demostraciones
+import services.Reportes
+import utils.Entradas
+import java.time.LocalDate
 
 fun main() {
-    println("=== SISTEMA DE GESTIÓN DE PIZZERÍA ===")
+    println("=== PIZZERÍA KOTLIN | ACTIVIDAD SUMATIVA 1 ===")
 
-    // 1. CONFIGURACIÓN DEL PRODUCTO
-    val precioPizza = leerDecimalPositivo(
-        "Precio de la pizza Pepperoni", 9990.0
+    val pizza = Pizza("Pepperoni", 9990.0, mapOf(
+        "Masa" to 1, "Salsa" to 1, "Queso" to 2, "Pepperoni" to 1
+    ))
+    val combo = Combo("Combo Familiar", 16990.0, mapOf(
+        "Masa" to 2, "Salsa" to 2, "Queso" to 4, "Pepperoni" to 2
+    ))
+    val bebida = Bebida("Bebida 1.5L", 2490.0)
+
+    // Dos tipos promocionables y uno regular. Set elimina duplicados por equals/hashCode.
+    val catalogo = setOf<Producto>(pizza, combo, bebida)
+    println("Catálogo de productos: ${catalogo.joinToString()}")
+
+    val periodo = PeriodoPromocion(
+        LocalDate.of(2026, 11, 1), LocalDate.of(2026, 11, 15)
     )
+    println("Promoción de demostración: ${periodo.inicio} a ${periodo.fin} (ambas fechas inclusivas).")
 
-    val pizzaPepperoni = Producto(
-        nombre = "Pepperoni",
-        precio = precioPizza,
-        ingredientes = mapOf(
-            "Masa" to 1,
-            "Salsa" to 1,
-            "Queso" to 2,
-            "Pepperoni" to 1
-        )
-    )
-
-    // 2. INVENTARIO INICIAL
-    println("\n--- INVENTARIO INICIAL ---")
-
-    val inventario = mutableMapOf(
-        "Masa" to leerEnteroNoNegativo("Unidades de masa", 10),
-        "Salsa" to leerEnteroNoNegativo("Unidades de salsa", 10),
-        "Queso" to leerEnteroNoNegativo("Unidades de queso", 20),
-        "Pepperoni" to leerEnteroNoNegativo("Unidades de pepperoni", 6)
-    )
-
-    val gestorInventario = Inventario()
-
-    // 3. REPARTIDORES DISPONIBLES
+    val inventario = Inventario(mapOf(
+        "Masa" to 30, "Salsa" to 30, "Queso" to 60, "Pepperoni" to 25
+    ))
     val repartidores = listOf(
         Repartidor("Carlos González", "+56987654321", "Providencia"),
         Repartidor("Daniela Soto", "+56987654322", "Ñuñoa"),
         Repartidor("Pedro Rojas", "+56987654323", "Santiago Centro")
     )
 
-    // 4. REGISTRO DE PEDIDOS DEL DÍA
+    // Lista mutable: los pedidos del día se agregan según la interacción del usuario.
+    // Para cumplir la evidencia de arreglos se convierte a Array al emitir el reporte.
     val pedidosDelDia = mutableListOf<Pedido>()
-    var siguienteId = 1001
+    var idSiguiente = 1001
 
     do {
-        println("\n--- NUEVO PEDIDO #$siguienteId ---")
+        println("\n--- REGISTRO DEL CLIENTE ---")
+        val cliente = Entradas.registrarCliente()
+        val fecha = Entradas.leerFecha()
+        val cantidadInicial = Entradas.leerCantidad("Cantidad de pizzas")
 
-        // REGISTRO DEL CLIENTE
-        val nombre = leerTexto(
-            "Nombre del cliente", "Cliente no informado"
+        // Pedido inicial del cliente. No se consume inventario hasta confirmar.
+        val pedidoInicial = Pedido(
+            idSiguiente++, cliente, listOf(DetallePedido(pizza, cantidadInicial)), fecha, periodo
         )
-        val direccion = leerTexto(
-            "Dirección de entrega", "Dirección no informada"
-        )
-        val telefonoIngresado = leerTexto("Teléfono", "")
+        println("\nPedido #${pedidoInicial.idPedido} registrado: $cantidadInicial pizza(s).")
 
-        val telefono = if (
-            formatoTelefono.matches(telefonoIngresado)
-        ) {
-            telefonoIngresado
+        // La segunda orden es opcional: el cliente decide si agregar productos.
+        val pedidoFinal = if (Entradas.leerSiNo("¿Desea agregar otra orden a este pedido? (s/n)")) {
+            val adicionales = mutableListOf<DetallePedido>()
+
+            if (Entradas.leerSiNo("¿Agregar más pizzas Pepperoni? (s/n)")) {
+                val cantidad = Entradas.leerCantidad("Cantidad de pizzas adicionales")
+                adicionales.add(DetallePedido(pizza, cantidad))
+            }
+            if (Entradas.leerSiNo("¿Agregar combo familiar? (s/n)")) {
+                val cantidad = Entradas.leerCantidad("Cantidad de combos")
+                adicionales.add(DetallePedido(combo, cantidad))
+            }
+            if (Entradas.leerSiNo("¿Agregar bebida 1.5L? (s/n)")) {
+                val cantidad = Entradas.leerCantidad("Cantidad de bebidas")
+                adicionales.add(DetallePedido(bebida, cantidad))
+            }
+
+            if (adicionales.isEmpty()) {
+                println("No se añadieron productos. Se conserva el pedido original.")
+                pedidoInicial
+            } else {
+                // Dos objetos Pedido independientes; el operador + consolida sus productos.
+                // Ambos son borradores: solo se verifica/descuenta stock del resultado.
+                val ordenAdicional = Pedido(idSiguiente++, cliente, adicionales, fecha, periodo)
+                val combinado = pedidoInicial + ordenAdicional
+                println("\n--- PEDIDOS COMBINADOS CON + ---")
+                println("#${pedidoInicial.idPedido} + #${ordenAdicional.idPedido} -> #${combinado.idPedido}")
+                println("Antes: ${Reportes.dinero(pedidoInicial.calcularTotal())} + " +
+                    Reportes.dinero(ordenAdicional.calcularTotal()))
+                println("Después de combinar: ${Reportes.dinero(combinado.calcularTotal())}")
+                combinado
+            }
         } else {
-            println("Teléfono inválido: se utilizará el valor predeterminado.")
-            "(000) 000-0000"
+            println("Se mantiene el pedido original sin combinar.")
+            pedidoInicial
         }
 
-        val correoIngresado = leerTexto(
-            "Correo electrónico (opcional)", ""
-        )
-
-        val correo: String? = when {
-            correoIngresado.isBlank() -> null
-            formatoCorreo.matches(correoIngresado) -> correoIngresado
-            else -> {
-                println("Correo inválido: se utilizará el valor predeterminado.")
-                "correo@invalido.com"
+        val aprobado = inventario.verificarYActualizarInventario(pedidoFinal)
+        var repartidor: Repartidor? = null
+        if (aprobado) {
+            pedidoFinal.cambiarEstado(EstadoPedido.EN_PREPARACION)
+            repartidor = asignarRepartidor(repartidores)
+            pedidoFinal.cambiarEstado(escogerEstado(repartidor))
+            if (pedidoFinal.estado == EstadoPedido.ENTREGADO && repartidor != null) {
+                println(repartidor.entregarPedido(pedidoFinal.idPedido))
             }
-        }
-
-        val notas = leerTexto(
-            "Notas para el pedido (opcional)", ""
-        ).ifBlank { null }
-
-        val cliente = Cliente(nombre, telefono, direccion, correo)
-
-        // CREACIÓN DEL PEDIDO
-        val cantidadPizzas = leerEnteroPositivo(
-            "Cantidad de pizzas"
-        )
-
-        val pedido = Pedido(
-            idPedido = siguienteId,
-            cliente = cliente,
-            productos = List(cantidadPizzas) { pizzaPepperoni }
-        )
-
-        // VERIFICACIÓN DEL INVENTARIO
-        val aceptado = gestorInventario.verificarYActualizarInventario(
-            pizzaPepperoni,
-            cantidadPizzas,
-            inventario
-        )
-
-        val repartidorAsignado: Repartidor?
-
-        if (aceptado) {
-            pedido.cambiarEstado("En preparación")
-
-            // ASIGNACIÓN DEL REPARTIDOR MÁS CERCANO
-            println(
-                "\nIngresa la distancia estimada desde el cliente a cada repartidor."
-            )
-
-            val distancias = repartidores.associateWith { repartidor ->
-                leerDecimalNoNegativo(
-                    "Distancia a ${repartidor.nombre} (km)"
-                )
-            }
-
-            val distanciaMinima = repartidores
-                .filter { it.disponible }
-                .mapNotNull { distancias[it] }
-                .minOrNull()
-
-            repartidorAsignado = repartidores.find { repartidor ->
-                repartidor.disponible &&
-                        distancias[repartidor] == distanciaMinima
-            }
-
-            // CAMBIOS DE ESTADO
-            println(
-                "\nEstado del pedido: 1) En preparación  " +
-                        "2) Listo  3) En camino  4) Entregado"
-            )
-            print("Elige estado [1]: ")
-
-            val opcion = readlnOrNull()?.trim().orEmpty()
-
-            val nuevoEstado = when (opcion) {
-                "2" -> "Listo"
-                "3" -> if (repartidorAsignado != null) {
-                    "En camino"
-                } else {
-                    "Listo"
-                }
-                "4" -> if (repartidorAsignado != null) {
-                    println(
-                        repartidorAsignado.entregarPedido(pedido.idPedido)
-                    )
-                    "Entregado"
-                } else {
-                    "Listo"
-                }
-                else -> "En preparación"
-            }
-
-            pedido.cambiarEstado(nuevoEstado)
-
-            // NOTIFICACIÓN SIMULADA
-            correo?.takeIf {
-                it != "correo@invalido.com"
-            }?.let { correoValido ->
-                println("Notificación simulada para: $correoValido")
-            }
-
         } else {
-            pedido.cambiarEstado("Rechazado")
-            repartidorAsignado = null
+            pedidoFinal.cambiarEstado(EstadoPedido.RECHAZADO)
         }
 
-        // REGISTRAR Y MOSTRAR RESUMEN
-        pedidosDelDia.add(pedido)
-        mostrarResumen(pedido, repartidorAsignado, notas)
+        // Solo el pedido final se confirma y descuenta stock, con o sin orden adicional.
+        pedidosDelDia.add(pedidoFinal)
+        Reportes.resumen(pedidoFinal, repartidor, inventario)
+        Demostraciones.mostrar(cliente, pizza, combo, repartidor)
 
-        println("\nInventario actual: $inventario")
-
-        siguienteId++
-
-        print("\n¿Registrar otro pedido? (s/n): ")
-        val continuar = readlnOrNull()?.trim()?.lowercase() == "s"
-
+        val continuar = Entradas.leerSiNo("\n¿Ingresar otro cliente? (s/n)")
     } while (continuar)
 
-    // 5. REPORTE DEL DÍA: ARREGLOS, FOR Y FILTER
-    val arregloPedidos: Array<Pedido> = pedidosDelDia.toTypedArray()
-
-    println("\n=========== REPORTE DEL DÍA ===========")
-
-    for (pedido in arregloPedidos) {
-        val detallePizzas = pedido.productos.groupingBy { it.nombre }
-            .eachCount().entries.joinToString(", ") { (nombre, cantidad) ->
-                "$nombre x$cantidad"
-            }
-
-        val total = if (pedido.estado == "Rechazado") {
-            0.0
-        } else {
-            pedido.calcularTotal()
-        }
-
-        println(
-            "#${pedido.idPedido} | ${pedido.cliente.nombre} | " +
-                    "$detallePizzas | ${dinero(total)} | ${pedido.estado}"
-        )
-    }
-
-    val estadosCompletados = setOf("Entregado")
-    val completados = arregloPedidos.filter {
-        it.estado in estadosCompletados
-    }
-    val pendientes = arregloPedidos.filter {
-        it.estado !in estadosCompletados && it.estado != "Rechazado"
-    }
-    val rechazados = arregloPedidos.filter {
-        it.estado == "Rechazado"
-    }
-
-    println(
-        "Completados: ${completados.size} | " +
-                "Pendientes: ${pendientes.size} | " +
-                "Rechazados: ${rechazados.size}"
-    )
-    println("======================================")
+    Reportes.reporteDiario(pedidosDelDia.toTypedArray())
 }
 
-// FUNCIONES REUTILIZABLES
-
-private fun leerTexto(
-    etiqueta: String,
-    valorPredeterminado: String
-): String {
-    print("$etiqueta: ")
-    return readlnOrNull()?.trim().orEmpty()
-        .ifBlank { valorPredeterminado }
+private fun asignarRepartidor(repartidores: List<Repartidor>): Repartidor? {
+    println("\nDistancias estimadas a repartidores disponibles:")
+    val distancias = repartidores.filter { it.disponible }.associateWith {
+        Entradas.leerDistancia("Distancia a ${it.nombre}")
+    }
+    val minimo = distancias.values.minOrNull()
+    return repartidores.find { it.disponible && distancias[it] == minimo }
 }
 
-private fun leerEnteroPositivo(etiqueta: String): Int {
-    while (true) {
-        print("$etiqueta: ")
-        try {
-            val numero = readlnOrNull()?.trim()?.toInt()
-                ?: throw NumberFormatException("Debe ingresar un número entero")
-
-            require(numero > 0) {
-                "La cantidad debe ser mayor que cero"
-            }
-            return numero
-
-        } catch (error: NumberFormatException) {
-            println("Entrada inválida: ingresa un número entero.")
-        } catch (error: IllegalArgumentException) {
-            println("Entrada inválida: ${error.message}")
-        }
+private fun escogerEstado(repartidor: Repartidor?): EstadoPedido {
+    println("\nEstado: 1) En preparación  2) Listo  3) En camino  4) Entregado")
+    print("Opción [1]: ")
+    return when (readlnOrNull()?.trim()) {
+        "2" -> EstadoPedido.LISTO
+        "3" -> if (repartidor != null) EstadoPedido.EN_CAMINO else EstadoPedido.LISTO
+        "4" -> if (repartidor != null) EstadoPedido.ENTREGADO else EstadoPedido.LISTO
+        else -> EstadoPedido.EN_PREPARACION
     }
 }
-
-private fun leerEnteroNoNegativo(
-    etiqueta: String,
-    defecto: Int
-): Int {
-    while (true) {
-        print("$etiqueta [Enter = $defecto]: ")
-        val entrada = readlnOrNull()?.trim().orEmpty()
-
-        if (entrada.isBlank()) return defecto
-
-        try {
-            val numero = entrada.toInt()
-            require(numero >= 0) {
-                "El stock no puede ser negativo"
-            }
-            return numero
-
-        } catch (error: NumberFormatException) {
-            println("Entrada inválida: debes ingresar un número entero.")
-        } catch (error: IllegalArgumentException) {
-            println("Entrada inválida: ${error.message}")
-        }
-    }
-}
-
-private fun leerDecimalPositivo(
-    etiqueta: String,
-    defecto: Double
-): Double {
-    while (true) {
-        print("$etiqueta [Enter = ${dinero(defecto)}]: ")
-        val entrada = readlnOrNull()?.trim().orEmpty()
-
-        if (entrada.isBlank()) return defecto
-
-        try {
-            val numero = entrada.replace(',', '.').toDouble()
-            require(numero.isFinite() && numero > 0) {
-                "El precio debe ser mayor que cero"
-            }
-            return numero
-
-        } catch (error: NumberFormatException) {
-            println("Entrada inválida: debes ingresar un precio numérico.")
-        } catch (error: IllegalArgumentException) {
-            println("Entrada inválida: ${error.message}")
-        }
-    }
-}
-
-private fun leerDecimalNoNegativo(etiqueta: String): Double {
-    while (true) {
-        print("$etiqueta: ")
-
-        try {
-            val numero = readlnOrNull()?.trim()
-                ?.replace(',', '.')?.toDouble()
-                ?: throw NumberFormatException("Distancia no informada")
-
-            require(numero.isFinite() && numero >= 0) {
-                "La distancia no puede ser negativa"
-            }
-            return numero
-
-        } catch (error: NumberFormatException) {
-            println("Entrada inválida: ingresa una distancia numérica.")
-        } catch (error: IllegalArgumentException) {
-            println("Entrada inválida: ${error.message}")
-        }
-    }
-}
-
-private fun mostrarResumen(
-    pedido: Pedido,
-    repartidor: Repartidor?,
-    notas: String?
-) {
-    println("\n=========== RESUMEN PEDIDO #${pedido.idPedido} ===========")
-    println("Cliente: ${pedido.cliente.nombre}")
-    println("Dirección: ${pedido.cliente.direccion}")
-    println("Teléfono: ${pedido.cliente.contacto}")
-    println("Correo: ${pedido.cliente.correo ?: "No informado"}")
-
-    println("Productos:")
-    pedido.productos.groupingBy { it.nombre }
-        .eachCount().forEach { (nombre, cantidad) ->
-            val precioUnitario = pedido.productos
-                .first { it.nombre == nombre }.precio
-
-            println(
-                "  $nombre x$cantidad | " +
-                        "Precio unitario: ${dinero(precioUnitario)}"
-            )
-        }
-
-    println("Notas: ${notas ?: "Sin notas"}")
-
-    if (pedido.estado != "Rechazado") {
-        println("Subtotal: ${dinero(pedido.calcularSubtotal())}")
-        println("Descuento: ${dinero(pedido.calcularDescuento())}")
-        println("IVA (19%): ${dinero(pedido.calcularImpuesto())}")
-        println("Total: ${dinero(pedido.calcularTotal())}")
-    } else {
-        println("Total a cobrar: ${dinero(0.0)} (pedido rechazado)")
-    }
-
-    println("Estado: ${pedido.estado}")
-    println("Repartidor: ${repartidor?.nombre ?: "Sin asignar"}")
-    println("================================================")
-}
-
-private fun dinero(valor: Double): String =
-    "$" + String.format(
-        Locale.forLanguageTag("es-CL"),
-        "%,.2f",
-        valor
-    )
